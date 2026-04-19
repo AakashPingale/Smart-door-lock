@@ -37,6 +37,7 @@
 
 // 👉 Set your password here
 static char correct_pass[7] = "123456";
+static char admin_pass[7] = "999999";
 
 // ==================== CONFIGURATION ====================
 
@@ -72,6 +73,8 @@ static char correct_pass[7] = "123456";
 #define FP_TX_PIN           17
 #define FP_TOUCH_PIN        4
 
+#define RELAY_PIN  19 
+
 #define BUZZER_PIN          18
 
 #define I2C_PORT            I2C_NUM_0
@@ -101,7 +104,18 @@ static const char *TAG_FP = "FP";
 static const char *TAG_LCD = "LCD";
 static const char *TAG_BT = "BT";
 //static const char *TAG_BUZZ = "BUZZ";
+// ==================== SYSTEM MODE ====================
+typedef enum {
+    MODE_IDLE,
+    MODE_ADMIN_AUTH,
+    MODE_ADMIN_MENU
+} system_mode_t;
 
+static system_mode_t system_mode = MODE_IDLE;
+
+// Long press detection
+static int64_t key_press_time = 0;
+static char last_key = 0;
 // ==================== NVS ====================
 #define NVS_NAMESPACE "storage"
 #define NVS_KEY_PASS  "user_pass"
@@ -152,6 +166,8 @@ static SemaphoreHandle_t state_mutex;
 static volatile uint16_t g_enroll_id = 0;
 static volatile bool g_enroll_mode = false;
 static volatile bool g_fp_busy = false; 
+
+static int menu_index = 0;
 
 static uint32_t spp_handle = 0;
 // ==================== KEYPAD ====================
@@ -296,7 +312,17 @@ void lcd_cursor(uint8_t col, uint8_t row) {
 void lcd_print(const char *str) {
     while (*str) lcd_data(*str++);
 }
+// ================= IDLE SCREEN =================
+static void lcd_show_idle(void) {
 
+    lcd_clear();
+    lcd_cursor(0, 0);
+    lcd_print("Enter password");
+    lcd_cursor(0, 1);
+    lcd_print("/scan Finger");
+
+    ESP_LOGI("LCD", "Idle Screen");
+}
 // ==================== BUZZER DRIVER ====================
 
 static void buzzer_init(void) {
@@ -331,7 +357,23 @@ static void buzzer_beep(uint16_t ms, uint8_t count) {
         if (i < count - 1) vTaskDelay(pdMS_TO_TICKS(ms / 2));
     }
 }
+static void relay_init(void) {
+    gpio_set_direction(RELAY_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(RELAY_PIN, 0);  // LOCKED state
+}
+// Adjust logic depending on your relay (LOW or HIGH trigger)
+#define RELAY_ON  1   // try 0 if reversed
+#define RELAY_OFF 0
 
+static void door_unlock(void) {
+    gpio_set_level(RELAY_PIN, RELAY_ON);
+    ESP_LOGI("LOCK", "Door UNLOCKED");
+}
+
+static void door_lock(void) {
+    gpio_set_level(RELAY_PIN, RELAY_OFF);
+    ESP_LOGI("LOCK", "Door LOCKED");
+}
 // ==================== R307S FINGERPRINT DRIVER ====================
 
 static uint16_t calc_checksum(uint8_t *packet, uint16_t len) {
@@ -770,9 +812,11 @@ else if (strncmp(buf, "SET,PASS:", 9) == 0) {
         nvs_save_password(correct_pass);
 
         bluetooth_spp_send("Password Updated\n");
+        ESP_LOGI("BLUETOOTH","Password Updated");
 
     } else {
         bluetooth_spp_send("ERROR: Pass must be 6 digits\n");
+        ESP_LOGI("BLUETOOTH","ERROR: Pass must be 6 digits");
     }
 }
 
@@ -780,141 +824,8 @@ else if (strncmp(buf, "SET,PASS:", 9) == 0) {
 
 else {
     bluetooth_spp_send("ERROR: Invalid Command\n");
-}
-//             if (strncmp(buf, "SET,ID:", 7) == 0) {
-
-//     int id = atoi(&buf[7]);
-
-//     if (id > 0 && id <= 1000) {
-
-//         ESP_LOGI(TAG_BT, "Enroll request: ID=%d", id);
-//         bluetooth_spp_send("Enroll Starting...\n");
-
-//         xSemaphoreTake(state_mutex, portMAX_DELAY);
-//         g_enroll_id = (uint16_t)id;
-//         g_enroll_mode = true;
-//         xSemaphoreGive(state_mutex);
-
-//         xEventGroupSetBits(evt_group, EVT_ENROLL_REQUEST);
-//     } 
-//     // ================= NEW COMMANDS =================
-
-// else if (strncmp(buf, "GET,STATUS", 10) == 0) {
-
-//     int count = fp_get_count();
-
-//     char msg[128];
-//     snprintf(msg, sizeof(msg),
-//         "System: Ready\nMode: Idle\nFP Count: %d\n",
-//         (count >= 0) ? count : 0
-//     );
-
-//     bluetooth_spp_send(msg);
-// }
-
-// else if (strncmp(buf, "GET,COUNT", 9) == 0) {
-
-//     int count = fp_get_count();
-
-//     char msg[64];
-//     if (count >= 0) {
-//         snprintf(msg, sizeof(msg), "Fingerprints: %d\n", count);
-//     } else {
-//         snprintf(msg, sizeof(msg), "Error reading count\n");
-//     }
-
-//     bluetooth_spp_send(msg);
-// }
-
-// else if (strncmp(buf, "SET,PASS:", 9) == 0) {
-
-//     char *new_pass = &buf[9];
-
-//     if (strlen(new_pass) == 6) {
-
-//         strcpy(correct_pass, new_pass);
-//         nvs_save_password(correct_pass);
-//         bluetooth_spp_send("Password Updated\n");
-
-//         lcd_clear();
-//         lcd_print("Pass Updated");
-//         buzzer_beep(100,2);
-
-//         vTaskDelay(pdMS_TO_TICKS(1500));
-
-//         lcd_clear();
-//         lcd_cursor(0,0);
-//         lcd_print("Enter password");
-//         lcd_cursor(0,1);
-//         lcd_print("/scan Finger");
-
-//     } else {
-//         bluetooth_spp_send("ERROR: Pass must be 6 digits\n");
-//     }
-// }
-
-// ================= DEFAULT =================
-
-// else {
-//     bluetooth_spp_send("ERROR: Use SET,ID / DEL,ID / GET / SET,PASS\n");
-// }
-    // else {
-    //     bluetooth_spp_send("ERROR: ID must be 1-1000\n");
-    // }
-// }
-
-// else if (strncmp(buf, "DEL,ID:", 7) == 0) {
-
-//     int id = atoi(&buf[7]);
-
-//     if (id > 0 && id <= 1000) {
-
-//         ESP_LOGI(TAG_BT, "Delete request: ID=%d", id);
-//         bluetooth_spp_send("Deleting...\n");
-
-//         if (fp_delete((uint16_t)id)) {
-
-//             bluetooth_spp_send("Delete SUCCESS\n");
-
-//             lcd_clear();
-//             lcd_print("Deleted OK");
-
-//             lcd_cursor(0,1);
-//             char msg[16];
-//             snprintf(msg, 16, "ID:%d", id);
-//             lcd_print(msg);
-
-//             buzzer_beep(100, 2);
-
-//         } else {
-
-//             bluetooth_spp_send("Delete FAILED\n");
-
-//             lcd_clear();
-//             lcd_print("Delete FAIL");
-
-//             buzzer_beep(300, 1);
-//         }
-
-//         vTaskDelay(pdMS_TO_TICKS(2000));
-
-//         lcd_clear();
-//        // Show ready screen
-//         lcd_clear();
-//         lcd_cursor(0, 0);
-//         lcd_print("Enter password");
-//         lcd_cursor(0, 1);
-//         lcd_print("/scan Finger");
-//     }
-//     else {
-//         bluetooth_spp_send("ERROR: ID must be 1-1000\n");
-//     }
-// }
-
-// else {
-//     bluetooth_spp_send("ERROR: Use SET,ID:x or DEL,ID:x\n");
-// }
-            
+    ESP_LOGI("BLUETOOTH","ERROR: Invalid Command");
+}            
             break;
         }
         
@@ -1008,11 +919,7 @@ static char keypad_get_key(void) {
 }
 static void update_password_display(void) {
 
-    lcd_clear();
-    lcd_cursor(0,0);
-    lcd_print("Enter Password");
-    ESP_LOGI("LCD","Enter Password");
-
+    // DO NOT clear full screen
     lcd_cursor(0,1);
 
     char buf[17] = {0};
@@ -1021,20 +928,62 @@ static void update_password_display(void) {
         buf[i] = show_password ? entered_pass[i] : '*';
     }
 
+    lcd_print("                "); // clear only line
+    lcd_cursor(0,1);
     lcd_print(buf);
 }
+
 static void task_keypad(void *pv) {
+
 
     while (1) {
 
         char key = keypad_get_key();
+        //char key = keypad_get_key();
+
+// ================= LONG PRESS DETECTION =================
+
+        if (key == 'C') {
+
+            if (last_key != 'C') {
+                key_press_time = esp_timer_get_time();
+                last_key = 'C';
+            } else {
+                int64_t duration = esp_timer_get_time() - key_press_time;
+
+                if (duration > 2000000) {  // 2 seconds
+
+                    if (system_mode == MODE_IDLE) {
+
+                        system_mode = MODE_ADMIN_AUTH;
+
+                        lcd_clear();
+                        lcd_print("Admin Mode");
+                        ESP_LOGI("KEYPAD","Admin Mode");
+                        lcd_cursor(0,1);
+                        lcd_print("Enter Pass");
+                        ESP_LOGI("KEYPAD","Enter Pass");
+
+                        buzzer_beep(100,2);
+
+                        // Reset password input
+                        pass_index = 0;
+                        memset(entered_pass, 0, sizeof(entered_pass));
+                    }
+                }
+            }
+
+        } else {
+            last_key = key;
+        }
 
         if (key) {
 
             buzzer_beep(50,1);
 
             // DIGITS
-            if (key >= '0' && key <= '9') {
+           // if (key >= '0' && key <= '9')
+            if (system_mode == MODE_IDLE && key >= '0' && key <= '9') {
 
                 if (pass_index < 6) {
                     entered_pass[pass_index++] = key;
@@ -1043,7 +992,8 @@ static void task_keypad(void *pv) {
             }
 
             // BACKSPACE
-            else if (key == '#') {
+            // else if (key == '#')
+            else if (system_mode == MODE_IDLE && key == '#') {
 
                 if (pass_index > 0) {
                     pass_index--;
@@ -1052,49 +1002,144 @@ static void task_keypad(void *pv) {
             }
 
             // ENTER
-            else if (key == '*') {
+            //else if (key == '*')
+            else if (system_mode == MODE_IDLE && key == '*') {
 
-                if (pass_index == 6) {
+    if (pass_index == 6) {
 
-                    if (strcmp(entered_pass, correct_pass) == 0) {
+        if (strcmp(entered_pass, correct_pass) == 0) {
 
-                        lcd_clear();
-                        lcd_print("Access OK");
-                        ESP_LOGI("LCD","Access Ok");
-                        buzzer_beep(100,2);
+            lcd_clear();
+            lcd_print("Welcome");
+            ESP_LOGI("KEYPAD","Welcome");
+            buzzer_beep(100,2);
+             // 🔥 UNLOCK DOOR
+            door_unlock();
+            ESP_LOGI("DOOR","Door Unlocked");
 
-                    } else {
+            vTaskDelay(pdMS_TO_TICKS(5000));  // keep unlocked 5 sec
 
-                        lcd_clear();
-                        lcd_print("Access Denied");
-                        ESP_LOGI("LCD","Acees Denied");
-                        buzzer_beep(300,1);
-                    }
+            // 🔒 LOCK BACK
+            door_lock();
+            ESP_LOGI("DOOR","Door Locked");
 
-                    vTaskDelay(pdMS_TO_TICKS(2000));
-                }
+        } else {
 
-                // Reset
-                pass_index = 0;
-                memset(entered_pass, 0, sizeof(entered_pass));
-            }
+            lcd_clear();
+            lcd_print("Access Denied");
+            ESP_LOGI("KEYPAD","Access Denied");
+            buzzer_beep(300,1);
+        }
 
+        // HOLD MESSAGE (important)
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        // RESET INPUT
+        pass_index = 0;
+        memset(entered_pass, 0, sizeof(entered_pass));
+
+        // 🔥 RETURN TO IDLE SCREEN
+        lcd_show_idle();
+    }
+}
+           
             // SHOW
             else if (key == 'A') {
                 show_password = true;
+                ESP_LOGI("KEYPAD","Show Password");
             }
 
             // HIDE
             else if (key == 'B') {
                 show_password = false;
+                ESP_LOGI("KEYPAD","Hide Password");
             }
+             // ================= ADMIN PASSWORD INPUT =================
 
-            update_password_display();
+            if (system_mode == MODE_ADMIN_AUTH) {
+
+                if (key >= '0' && key <= '9') {
+
+                    if (pass_index < 6) {
+                        entered_pass[pass_index++] = key;
+                        entered_pass[pass_index] = '\0';
+                        ESP_LOGI("KEYPAD","Password: %s", entered_pass);
+                    }
+                }
+
+                else if (key == '#') {
+
+                    if (pass_index > 0) {
+                        pass_index--;
+                        entered_pass[pass_index] = '\0';
+                        ESP_LOGI("KEYPAD","BACKSPACE: %s", entered_pass);
+                    }
+                }
+
+                else if (key == 'D') {
+
+                    // TEMP: hardcoded admin password
+                    if (strcmp(entered_pass, admin_pass) == 0) {
+
+                        lcd_clear();
+                        lcd_print("Admin OK");
+                        ESP_LOGI("KEYPAD","Admin OK");
+                        buzzer_beep(100,2);
+
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+
+                        // ✅ MOVE TO ADMIN MENU (NOT IDLE)
+                        system_mode = MODE_ADMIN_MENU;
+                        menu_index = 0;
+
+                        lcd_clear();
+                        lcd_print(">Change Pass");
+                        lcd_cursor(0,1);
+                        lcd_print(" Change Admin");
+                        ESP_LOGI("KEYPAD","Admin Menu");
+
+
+                    
+                    } else {
+
+                        lcd_clear();
+                        lcd_print("Admin Denied");
+                        ESP_LOGI("KEYPAD","Admin Denied");
+
+                        buzzer_beep(300,1);
+
+                        vTaskDelay(pdMS_TO_TICKS(1500));
+
+                        system_mode = MODE_IDLE;
+                        lcd_show_idle();
+                    }
+
+                    // Reset input
+                    pass_index = 0;
+                    memset(entered_pass, 0, sizeof(entered_pass));
+                }
+
+                // Update display (masked)
+                lcd_cursor(0,1);
+
+                char buf[17] = {0};
+                for (int i = 0; i < pass_index; i++) {
+                    buf[i] = '*';
+                }
+
+                lcd_print("                "); // clear line
+                lcd_cursor(0,1);
+                lcd_print(buf);
+            }
+            if (system_mode == MODE_IDLE && pass_index > 0) {
+                update_password_display();
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
+
 // ==================== MAIN TASKS ====================
 
 static void task_fingerprint(void *pv) {
@@ -1197,8 +1242,8 @@ static void task_fingerprint(void *pv) {
 
             if (last_state != 1) {
                 lcd_clear();
-                lcd_print("Access OK");
-                ESP_LOGI(TAG_FP,"Access OK");
+                lcd_print("Welcome");
+                ESP_LOGI(TAG_FP,"Welcome");
 
                 char buf[16];
                 snprintf(buf, 16, "ID:%d", matched_id);
@@ -1210,6 +1255,15 @@ static void task_fingerprint(void *pv) {
             }
 
             buzzer_beep(100, 2);
+             // 🔥 UNLOCK DOOR
+            door_unlock();
+            ESP_LOGI("DOOR","Door Unlocked");
+
+            vTaskDelay(pdMS_TO_TICKS(5000));
+
+            // 🔒 LOCK BACK
+            door_lock();
+            ESP_LOGI("DOOR","Door Locked");
 
             // Wait until finger removed
             while (gpio_get_level(FP_TOUCH_PIN) == 0) {
@@ -1218,15 +1272,10 @@ static void task_fingerprint(void *pv) {
 
             vTaskDelay(pdMS_TO_TICKS(300));
 
-            // 🔥 NOW go back to idle
+            // NOW go back to idle
             // Show ready screen
             lcd_clear();
-            lcd_cursor(0, 0);
-            lcd_print("Enter password");
-            lcd_cursor(0, 1);
-            lcd_print("/scan Finger");
-            ESP_LOGI("LCD","Enter password");
-            ESP_LOGI("LCD","/scan Finger"); 
+            lcd_show_idle(); 
             last_state = 0;
         
             
@@ -1239,6 +1288,7 @@ static void task_fingerprint(void *pv) {
                  if (last_state != 2) {
                     lcd_clear();
                     lcd_print("Access Denied");
+                    ESP_LOGI("LCD","Access Denied");
                     last_state = 2;
                 }
 
@@ -1299,28 +1349,28 @@ static void task_fingerprint(void *pv) {
     }
 }
 
-static void task_touch_monitor(void *pv) {
+        static void task_touch_monitor(void *pv) {
     
-    bool last_state = false;
+            bool last_state = false;
     
-    while (1) {
-        bool touched = gpio_get_level(FP_TOUCH_PIN);
+            while (1) {
+                bool touched = gpio_get_level(FP_TOUCH_PIN);
         
-        if (touched && !last_state) {
+                if (touched && !last_state) {
             // Rising edge - finger detected
-            xSemaphoreTake(state_mutex, portMAX_DELAY);
-            bool in_enroll = g_enroll_mode;
-            xSemaphoreGive(state_mutex);
+                xSemaphoreTake(state_mutex, portMAX_DELAY);
+                bool in_enroll = g_enroll_mode;
+                xSemaphoreGive(state_mutex);
             
-            if (!in_enroll) {
-                xEventGroupSetBits(evt_group, EVT_TOUCH_DETECTED);
+                if (!in_enroll) {
+                    xEventGroupSetBits(evt_group, EVT_TOUCH_DETECTED);
             }
         }
         
-        last_state = touched;
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-}
+                last_state = touched;
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        }
 static void keypad_init(void) {
 
     // Rows → OUTPUT
@@ -1392,6 +1442,7 @@ void app_main(void) {
     ESP_LOGI("TOUCH", "State: %d", gpio_get_level(FP_TOUCH_PIN));
     // Init hardware
     buzzer_init();
+    relay_init();
     lcd_init();
     lcd_clear();
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -1421,12 +1472,13 @@ void app_main(void) {
     
     // Show ready screen
     lcd_clear();
-    lcd_cursor(0, 0);
-    lcd_print("Enter password");
-    lcd_cursor(0, 1);
-    lcd_print("/scan Finger");
-    ESP_LOGI(TAG_SYS,"Enter password");
-    ESP_LOGI(TAG_SYS,"/scan Finger");
+    lcd_show_idle();
+    // lcd_cursor(0, 0);
+    // lcd_print("Enter password");
+    // lcd_cursor(0, 1);
+    // lcd_print("/scan Finger");
+    // ESP_LOGI(TAG_SYS,"Enter password");
+    // ESP_LOGI(TAG_SYS,"/scan Finger");
     // Create tasks
     xTaskCreatePinnedToCore(task_fingerprint, "fp_task", 8192, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(task_keypad, "keypad", 4096, NULL, 4, NULL, 1);
