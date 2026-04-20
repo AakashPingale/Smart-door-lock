@@ -317,9 +317,9 @@ static void lcd_show_idle(void) {
 
     lcd_clear();
     lcd_cursor(0, 0);
-    lcd_print("Enter password");
+    lcd_print("Enter Password");
     lcd_cursor(0, 1);
-    lcd_print("/scan Finger");
+    lcd_print("/Scan Finger");
 
     ESP_LOGI("LCD", "Idle Screen");
 }
@@ -528,11 +528,22 @@ static bool fp_delete(uint16_t id) {
     uint8_t cc = fp_read_resp(resp, sizeof(resp), &data_len);
 
     if (cc == CC_SUCCESS) {
+        lcd_clear();
+        lcd_cursor(0,0);
+        lcd_print("Deleted ok");
+        lcd_cursor(0,1);
+        char buf[16];
+        snprintf(buf, 16, "ID:%d", id);
+        lcd_print(buf);
         ESP_LOGI(TAG_FP, "Delete OK: ID=%d", id);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        lcd_show_idle();
         return true;
+
     }
 
     ESP_LOGE(TAG_FP, "Delete Failed: 0x%02X", cc);
+    lcd_show_idle();
     return false;
 }
 static int fp_get_count(void) {
@@ -588,6 +599,7 @@ static bool fp_enroll_step1(void) {
         ESP_LOGE(TAG_FP, "Img2Tz(1) fail: 0x%02X", cc);
         return false;
     }
+    
     ESP_LOGI(TAG_FP, "Enroll: Remove finger");
     buzzer_beep(100, 1);
 
@@ -780,7 +792,9 @@ else if (strcmp(buf, "GET,STATUS") == 0) {
         (count >= 0) ? count : 0
     );
 
+
     bluetooth_spp_send(msg);
+    ESP_LOGI(TAG_BT,"Status: %s",msg);
 }
 
 // ================= GET COUNT =================
@@ -798,6 +812,7 @@ else if (strcmp(buf, "GET,COUNT") == 0) {
     }
 
     bluetooth_spp_send(msg);
+    ESP_LOGI(TAG_BT,"Count: %s",msg);
 }
 
 // ================= SET PASSWORD =================
@@ -1223,12 +1238,14 @@ static void task_fingerprint(void *pv) {
             vTaskDelay(pdMS_TO_TICKS(3000));
             
             lcd_clear();
-            lcd_cursor(0, 0);
-            lcd_print("Place Finger");
-            ESP_LOGI(TAG_FP,"Place Finger");
-            lcd_cursor(0, 1);
-            lcd_print("Or BT Enroll");
-            ESP_LOGI(TAG_FP,"Or BT Enroll");
+            lcd_show_idle();
+
+            // lcd_cursor(0, 0);
+            // lcd_print("Place Finger");
+            // ESP_LOGI(TAG_FP,"Place Finger");
+            // lcd_cursor(0, 1);
+            // lcd_print("Or BT Enroll");
+           // ESP_LOGI(TAG_FP,"Or BT Enroll");
         }
         // ================= REAL-TIME SCAN LOOP =================
         // uint8_t resp[16];
@@ -1304,12 +1321,13 @@ static void task_fingerprint(void *pv) {
                 if (last_state != 0) {
                  // Show ready screen
                     lcd_clear();
-                    lcd_cursor(0, 0);
-                    lcd_print("Enter password");
-                    lcd_cursor(0, 1);
-                    lcd_print("/scan Finger");
-                    ESP_LOGI("LCD","Enter password");
-                    ESP_LOGI("LCD","/scan Finger");
+                    lcd_show_idle();
+                    // lcd_cursor(0, 0);
+                    // lcd_print("Enter password");
+                    // lcd_cursor(0, 1);
+                    // lcd_print("/Scan Finger");
+                    // ESP_LOGI("LCD","Enter password");
+                    // ESP_LOGI("LCD","/Scan Finger");
                     last_state = 0;
                 }
             }
